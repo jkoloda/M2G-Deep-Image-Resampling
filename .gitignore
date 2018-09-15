@@ -1,2 +1,4 @@
 dataset/
+__pycache__/
+tests.py
 resampling.py
