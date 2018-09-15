@@ -47,6 +47,32 @@ def add_border(img, border, fill=0):
     return container
 
 
+def set_border(img, border, fill=0):
+    """Set border around image to value.
+
+    Parameters
+    ----------
+    border : int
+        Border with (in pixels).
+
+    fill : float
+        Pixel value the border should be filled with.
+
+    Returns
+    -------
+    img : ndarray
+        Image with the added border.
+
+    """
+    if border == 0:
+        return img
+
+    # Set border
+    img = img[border:-border, border:-border]
+    img = add_border(img, border=border, fill=fill)
+    return img
+
+
 def add_random_sign(x):
     """Add random sign to a given variable.
 

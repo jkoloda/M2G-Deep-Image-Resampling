@@ -16,7 +16,7 @@ The generator should return the following items:
 import os
 import numpy as np
 import cv2
-from utils import extract_random_block, add_border, add_random_sign
+from utils import extract_random_block, add_border, add_random_sign, set_border
 
 
 class ResamplingGenerator():
@@ -47,8 +47,11 @@ class ResamplingGenerator():
             self.images.append(img)
 
         # Build grid
-        self.c_grid, self.r_grid = np.meshgrid(np.arange(0, self.blk_size),
-                                               np.arange(0, self.blk_size))
+        self.c_grid, self.r_grid = np.meshgrid(
+                                    np.arange(0, self.blk_size+2*self.border),
+                                    np.arange(0, self.blk_size+2*self.border))
+        self.r_grid = (self.r_grid).astype(np.float32)
+        self.c_grid = (self.c_grid).astype(np.float32)
 
         # Build mask
         self.mask = np.ones((self.blk_size, self.blk_size))
@@ -58,16 +61,42 @@ class ResamplingGenerator():
         """Create iterator that can be called with next()."""
         # Randomly select images to fill up the batch
         indices = np.random.randint(0, self.num_images, self.batch_size)
-        batch = []
+        input_batch = []
+        masks_batch = []
         for index in indices:
             T = self.get_random_transform()
+
+            # Input batch
             blk = self.get_block(self.images[index])
-            blk = cv2.warpAffine(blk,
-                                 T,
-                                 (self.blk_size+2*self.border,
-                                  self.blk_size+2*self.border))
-            batch.append(blk)
-        yield np.asarray(batch)
+            r_mesh = cv2.warpAffine(self.r_grid,
+                                    T,
+                                    (self.blk_size+2*self.border,
+                                     self.blk_size+2*self.border))
+            c_mesh = cv2.warpAffine(self.c_grid,
+                                    T,
+                                    (self.blk_size+2*self.border,
+                                     self.blk_size+2*self.border))
+
+            # Input batch normalization
+            blk = (blk/255.0 - 0.5)*2.0
+            blk = blk * self.mask
+            r_mesh = (r_mesh - self.r_grid)/self.blk_size
+            c_mesh = (c_mesh - self.c_grid)/self.blk_size
+
+            r_mesh = r_mesh*self.mask
+            c_mesh = c_mesh*self.mask
+
+            input_batch.append(np.stack((blk, r_mesh, c_mesh), axis=-1))
+
+            # Mask batch
+            transformed_mask = cv2.warpAffine(self.mask,
+                                              T,
+                                              (self.blk_size+2*self.border,
+                                               self.blk_size+2*self.border))
+            transformed_mask[transformed_mask <= 0] = 0
+            transformed_mask[transformed_mask > 0] = 1
+            masks_batch.append(transformed_mask)
+        yield np.asarray(input_batch), np.asarray(masks_batch)
 
     def get_block(self, img):
         """Extract random block from the image.
