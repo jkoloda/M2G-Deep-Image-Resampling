@@ -15,8 +15,15 @@ The generator should return the following items:
 
 import os
 import numpy as np
+from numpy.linalg import inv
 import cv2
-from utils import extract_random_block, add_border, add_random_sign, set_border
+from utils import (
+    add_border,
+    add_random_sign,
+    build_transformation_matrix,
+    extract_random_block,
+    transform_image,
+)
 
 
 class ResamplingGenerator():
@@ -62,41 +69,63 @@ class ResamplingGenerator():
         # Randomly select images to fill up the batch
         indices = np.random.randint(0, self.num_images, self.batch_size)
         input_batch = []
-        masks_batch = []
-        for index in indices:
-            T = self.get_random_transform()
+        forward_r_mesh_batch = []
+        forward_c_mesh_batch = []
+        backward_r_mesh_batch = []
+        backward_c_mesh_batch = []
+        forward_blk_batch = []
+        forward_mask_batch = []
 
-            # Input batch
-            blk = self.get_block(self.images[index])
-            r_mesh = cv2.warpAffine(self.r_grid,
-                                    T,
-                                    (self.blk_size+2*self.border,
-                                     self.blk_size+2*self.border))
-            c_mesh = cv2.warpAffine(self.c_grid,
-                                    T,
-                                    (self.blk_size+2*self.border,
-                                     self.blk_size+2*self.border))
+        while True:
+            for index in indices:
+                T = self.get_random_transform()
 
-            # Input batch normalization
-            blk = (blk/255.0 - 0.5)*2.0
-            blk = blk * self.mask
-            r_mesh = (r_mesh - self.r_grid)/self.blk_size
-            c_mesh = (c_mesh - self.c_grid)/self.blk_size
+                # Input batch
+                blk = self.get_block(self.images[index])
+                transformed, r_mesh, c_mesh = transform_image(
+                                                        [blk, self.mask], T)
 
-            r_mesh = r_mesh*self.mask
-            c_mesh = c_mesh*self.mask
+                # Input batch normalization
+                blk = (blk/255.0 - 0.5)*2.0
+                blk = blk * self.mask
 
-            input_batch.append(np.stack((blk, r_mesh, c_mesh), axis=-1))
+                transformed_blk = transformed[0]
+                transformed_mask = (transformed[1] > 0)
+                transformed_blk = (transformed_blk/255.0 - 0.5)*2.0
+                transformed_blk = transformed_blk * transformed_mask
 
-            # Mask batch
-            transformed_mask = cv2.warpAffine(self.mask,
-                                              T,
-                                              (self.blk_size+2*self.border,
-                                               self.blk_size+2*self.border))
-            transformed_mask[transformed_mask <= 0] = 0
-            transformed_mask[transformed_mask > 0] = 1
-            masks_batch.append(transformed_mask)
-        yield np.asarray(input_batch), np.asarray(masks_batch)
+                r_mesh = (r_mesh - self.r_grid)/self.blk_size
+                c_mesh = (c_mesh - self.c_grid)/self.blk_size
+                r_mesh = r_mesh*self.mask
+                c_mesh = c_mesh*self.mask
+
+                # 1) Build input batch (ground truth)
+                # and forward transform meshes
+                input_batch.append(blk)
+                forward_r_mesh_batch.append(r_mesh)
+                forward_c_mesh_batch.append(c_mesh)
+
+                # 2) Transformed data
+                forward_blk_batch.append(transformed_blk)
+                forward_mask_batch.append(transformed_mask)
+
+                # 3) Backward transform meshes
+                _, r_mesh, c_mesh = transform_image([self.mask], inv(T))
+                r_mesh = (r_mesh - self.r_grid)/self.blk_size
+                c_mesh = (c_mesh - self.c_grid)/self.blk_size
+                r_mesh = r_mesh*transformed_mask
+                c_mesh = c_mesh*transformed_mask
+
+                backward_r_mesh_batch.append(r_mesh)
+                backward_c_mesh_batch.append(c_mesh)
+
+            yield [np.asarray(input_batch),
+                   np.asarray(forward_r_mesh_batch),
+                   np.asarray(forward_c_mesh_batch),
+                   np.asarray(forward_blk_batch),
+                   np.asarray(forward_mask_batch),
+                   np.asarray(backward_r_mesh_batch),
+                   np.asarray(backward_c_mesh_batch)]
 
     def get_block(self, img):
         """Extract random block from the image.
@@ -114,15 +143,7 @@ class ResamplingGenerator():
 
     def get_random_transform(self):
         """Get random transform matrix (rotation, translation or zoom)."""
-        transform = np.random.randint(0, 2)
-        transform = 0
-
         # Rotation
-        if transform == 0:
-            angle = add_random_sign(np.random.randint(0, self.max_rotation))
-            T = cv2.getRotationMatrix2D(
-                ((self.blk_size+2*self.border)/2,
-                 (self.blk_size+2*self.border)/2), angle, 1)
-        elif transform == 1:
-            pass
+        angle = add_random_sign(np.random.randint(0, self.max_rotation))
+        T, t = build_transformation_matrix(rotation=angle)
         return T

@@ -125,13 +125,13 @@ def build_transformation_matrix(rotation=0, zoom=0, translation=(0, 0)):
     return np.matmul(R, Z), t
 
 
-def transform_image(img, T, t):
+def transform_image(imgs, T, t=None):
     """Apply affine trnaform to image.
 
     Parameters
     ----------
-    img : ndarray
-        Image that is to be transformed.
+    imgs : list
+        List of nadarrays (images) that are to be transformed.
 
     T : ndarray
         A 2x2 transformation matrix.
@@ -151,10 +151,17 @@ def transform_image(img, T, t):
         Columns of the resulting floating mesh.
 
     """
-    [rows, cols] = img.shape
-
     # Designed for even dimensions only
+    [rows, cols] = imgs[0].shape
     assert (rows % 2 == 0 and rows % 2 == 0)
+
+    # Images must have the same dimensions
+    for img in imgs:
+        [rows_temp, cols_temp] = img.shape
+        assert (rows == rows_temp and cols == cols_temp)
+
+    if t is None:
+        t = np.reshape(np.asarray([0, 0]), (2, 1))
 
     # Compute floating mesh
     reference = [rows/2+0.5, cols/2+0.5]
@@ -173,7 +180,7 @@ def transform_image(img, T, t):
     points = np.transpose(np.array([mesh_r.ravel(), mesh_c.ravel()]))
     points = points.astype(np.float32)
     xi = (grid_x, grid_y)
-    out = griddata(points, (img.ravel()).astype(np.float32),
-                   xi, method='linear')
+    out = [griddata(points, (img.ravel()).astype(np.float32),
+                    xi, method='nearest') for img in imgs]
 
     return out, mesh_r, mesh_c
